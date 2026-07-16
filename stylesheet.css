@@ -1,0 +1,174 @@
+.cricket-panel-box {
+    spacing: 6px;
+}
+
+.cricket-panel-icon {
+    icon-size: 16px;
+}
+
+.cricket-score-label {
+    padding-left: 2px;
+    padding-right: 4px;
+}
+
+.cricket-score-label.live {
+    font-weight: bold;
+}
+
+.cricket-scorecard-menu {
+    padding: 0 4px;
+}
+
+.cricket-tabs {
+    spacing: 8px;
+    padding: 4px 8px;
+}
+
+.cricket-tab {
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: bold;
+}
+
+.cricket-tab:hover {
+    background-color: rgba(128, 128, 128, 0.2);
+}
+
+.cricket-tab-active {
+    background-color: rgba(128, 128, 128, 0.35);
+}
+
+.cricket-scorecard-line,
+.cricket-scorecard-header,
+.cricket-scorecard-section,
+.cricket-scorecard-muted {
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+.cricket-scorecard-header {
+    font-weight: bold;
+    font-size: 1.02em;
+}
+
+.cricket-scorecard-section {
+    font-weight: bold;
+    padding-top: 8px;
+}
+
+.cricket-scorecard-muted {
+    font-size: 0.9em;
+    opacity: 0.75;
+}
+
+.cricket-grid-row {
+    spacing: 10px;
+    width: 100%;
+}
+
+.cricket-grid-header-row,
+.cricket-grid-data-row {
+    padding-left: 8px;
+    padding-right: 12px;
+}
+
+.cricket-grid-header-row {
+    padding-top: 4px;
+}
+
+.cricket-grid-data-row {
+    padding-top: 1px;
+    padding-bottom: 1px;
+}
+
+.cricket-grid-cell {
+    font-size: 0.95em;
+}
+
+.cricket-grid-header {
+    font-size: 0.82em;
+    font-weight: bold;
+    opacity: 0.75;
+}
+
+.cricket-grid-num {
+    font-variant-numeric: tabular-nums;
+}
+
+.cricket-grid-score {
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+
+.cricket-grid-team {
+    font-weight: bold;
+}
+
+.cricket-grid-muted {
+    opacity: 0.8;
+    font-size: 0.9em;
+}
+
+.cricket-overs-row {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+.cricket-overs-strip {
+    spacing: 8px;
+    padding: 4px 2px;
+}
+
+.cricket-over-balls {
+    spacing: 4px;
+}
+
+.cricket-over-meta {
+    spacing: 1px;
+    padding: 0 6px;
+    border-left-width: 1px;
+    border-left-color: rgba(180, 180, 180, 0.35);
+    padding-left: 8px;
+}
+
+.cricket-over-number {
+    font-size: 0.75em;
+    opacity: 0.8;
+}
+
+.cricket-over-runs {
+    font-size: 0.72em;
+    font-weight: bold;
+}
+
+.cricket-ball {
+    min-width: 22px;
+    min-height: 22px;
+    padding: 2px 4px;
+    border-radius: 5px;
+    font-size: 0.85em;
+    font-weight: bold;
+    text-align: center;
+    background-color: rgba(128, 128, 128, 0.35);
+}
+
+.cricket-ball-four {
+    background-color: rgba(46, 125, 50, 0.85);
+}
+
+.cricket-ball-six {
+    background-color: rgba(123, 31, 162, 0.9);
+}
+
+.cricket-ball-wicket {
+    background-color: rgba(198, 40, 40, 0.9);
+}
+
+.cricket-ball-extra {
+    background-color: rgba(245, 124, 0, 0.85);
+}
+
+.cricket-ball-dot,
+.cricket-ball-run {
+    background-color: rgba(128, 128, 128, 0.4);
+}

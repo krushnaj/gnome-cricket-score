@@ -1,0 +1,5 @@
+*.shell-extension.zip
+schemas/gschemas.compiled
+venv/
+.shexli-pkg/
+shexli-report.json

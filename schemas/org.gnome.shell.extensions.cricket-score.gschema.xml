@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="gnome-shell-extensions">
+  <schema id="org.gnome.shell.extensions.cricket-score"
+          path="/org/gnome/shell/extensions/cricket-score/">
+    <key name="refresh-interval" type="i">
+      <default>10</default>
+      <range min="1" max="900"/>
+      <summary>Refresh interval (seconds)</summary>
+      <description>How often to poll live scores.</description>
+    </key>
+    <key name="panel-position" type="s">
+      <default>"center"</default>
+      <choices>
+        <choice value="left"/>
+        <choice value="center"/>
+        <choice value="right"/>
+      </choices>
+      <summary>Panel position</summary>
+      <description>Which side of the top panel to place the cricket score indicator.</description>
+    </key>
+    <key name="selected-match-id" type="s">
+      <default>""</default>
+      <summary>Selected match ID</summary>
+      <description>ESPN event ID of the match shown on the panel. Empty means icon only.</description>
+    </key>
+  </schema>
+</schemalist>

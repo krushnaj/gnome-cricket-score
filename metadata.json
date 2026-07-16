@@ -1,0 +1,8 @@
+{
+  "name": "Cricket Score",
+  "description": "Live cricket scores in the GNOME top panel.\n\nShows match lists, a Cricinfo-style live summary (batters, bowlers, recent overs), and an optional pinned score on the panel.\n\nFetches public ESPN cricket scoreboard, summary, and play-by-play data over the network. No API key required. ESPN may change or restrict these endpoints without notice.",
+  "uuid": "cricket-score@krushnaj.github.io",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "settings-schema": "org.gnome.shell.extensions.cricket-score",
+  "url": "https://github.com/krushnaj/gnome-cricket-score"
+}
