@@ -52,38 +52,6 @@ Open the extension settings (Extensions app → Cricket Score → gear icon):
 make uninstall
 ```
 
-## Publish to extensions.gnome.org
-
-Packaging follows the [GNOME extensions guide](https://gjs.guide/extensions/) and [review guidelines](https://gjs.guide/extensions/review-guidelines/review-guidelines.html).
-
-```bash
-make pack
-```
-
-### Shexli (pre-upload static analysis)
-
-```bash
-# optional: use uv or python3 -m venv as you prefer
-./scripts/run-shexli.sh
-```
-
-Or manually:
-
-```bash
-virtualenv venv   # or: uv venv venv --python 3.12
-. venv/bin/activate
-pip install -U shexli
-shexli cricket-score@krushnaj.github.io.shell-extension.zip
-```
-
-Note: `shexli` 0.2.1 can segfault on lifecycle/logging AST checks (tree-sitter). `./scripts/run-shexli.sh` works around that and still runs packaging, metadata, prefs, imports, and session-mode rules.
-
-Upload the generated `cricket-score@krushnaj.github.io.shell-extension.zip` at:
-
-https://extensions.gnome.org/upload/
-
-Do **not** include `install.sh`, `Makefile`, or `README.md` in the zip (the pack target already excludes them).
-
 ## License
 
 [GPL-3.0-or-later](LICENSE) (compatible with GNOME Shell’s GPL-2.0-or-later).
