@@ -16,7 +16,7 @@ export default class CricketScorePreferences extends ExtensionPreferences {
         window.add(page);
 
         const group = new Adw.PreferencesGroup({
-            title: _('Cricket Score'),
+            title: _('gnome-cricket-score'),
             description: _('Configure how live scores appear in the top panel.'),
         });
         page.add(group);

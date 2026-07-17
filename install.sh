@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-UUID="cricket-score@krushnaj.github.io"
+UUID="gnome-cricket-score@krushnaj.github.io"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 EXT="${HOME}/.local/share/gnome-shell/extensions/${UUID}"
 
@@ -24,13 +24,28 @@ else
   cp -f icons/*.svg "${EXT}/icons/"
 fi
 
-# Remove previous UUID install if present
-OLD_EXT="${HOME}/.local/share/gnome-shell/extensions/cricket-score@cricket-gnome-extension"
-if [[ -d "${OLD_EXT}" ]]; then
-  rm -rf "${OLD_EXT}"
-  echo "Removed old install at ${OLD_EXT}"
-fi
+# Remove previous UUID installs if present
+for OLD_UUID in \
+  cricket-score@cricket-gnome-extension \
+  cricket-score@krushnaj.github.io \
+  cricket-score@krushna.github.io
+do
+  OLD_EXT="${HOME}/.local/share/gnome-shell/extensions/${OLD_UUID}"
+  if [[ -d "${OLD_EXT}" ]]; then
+    rm -rf "${OLD_EXT}"
+    echo "Removed old install at ${OLD_EXT}"
+  fi
+done
 
 echo "Installed to ${EXT}"
-echo "Restart GNOME Shell (logout on Wayland, or Alt+F2 → r on X11), then run:"
-echo "  gnome-extensions enable ${UUID}"
+echo
+if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+  echo "You are on Wayland. Log out and log back in, then the extension will load."
+  echo "It is already marked enabled in settings; after login it should appear in the panel."
+  echo
+  echo "If it does not, run:"
+  echo "  gnome-extensions enable ${UUID}"
+else
+  echo "Restart GNOME Shell (Alt+F2, type r, Enter), then run:"
+  echo "  gnome-extensions enable ${UUID}"
+fi

@@ -1,4 +1,4 @@
-UUID = cricket-score@krushnaj.github.io
+UUID = gnome-cricket-score@krushnaj.github.io
 EXTENSION_DIR = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 ZIP = $(UUID).shell-extension.zip
 

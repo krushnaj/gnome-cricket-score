@@ -1,4 +1,4 @@
-// Cricket Score - GNOME Shell Extension
+// gnome-cricket-score - GNOME Shell Extension
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Data source: ESPN public cricket scoreboard + match summary (no API key).
 // Requires GNOME Shell 45+ (ESM).
@@ -31,6 +31,31 @@ function playByPlayUrl(leagueId, eventId, {limit = 50, page = null} = {}) {
     if (page != null)
         url += `&page=${page}`;
     return url;
+}
+
+function formatMatchStartLocal(isoDate) {
+    if (!isoDate)
+        return null;
+
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime()))
+        return null;
+
+    const time = date.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+    const day = date.toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+    });
+    const today = new Date();
+    const isToday = date.getFullYear() === today.getFullYear() &&
+        date.getMonth() === today.getMonth() &&
+        date.getDate() === today.getDate();
+
+    return isToday ? `Starts at ${time}` : `Starts ${day}, ${time}`;
 }
 
 function overOrdinal(n) {
@@ -193,7 +218,7 @@ class MatchMenuItem extends PopupMenu.PopupBaseMenuItem {
 const CricketIndicator = GObject.registerClass(
 class CricketIndicator extends PanelMenu.Button {
     _init(iconFile) {
-        super._init(0.0, 'Cricket Score', false);
+        super._init(0.0, 'gnome-cricket-score', false);
 
         this._box = new St.BoxLayout({
             style_class: 'panel-status-menu-box cricket-panel-box',
@@ -471,6 +496,14 @@ export default class CricketScoreExtension extends Extension {
                 if (!id)
                     continue;
 
+                // Upcoming matches: show start time in your system timezone
+                let context = fullStatus?.summary || event?.summary || statusType?.detail || '';
+                if (!hasStarted) {
+                    const localStart = formatMatchStartLocal(event?.date || event?.startDate);
+                    if (localStart)
+                        context = localStart;
+                }
+
                 matches.push({
                     id,
                     leagueId,
@@ -481,7 +514,7 @@ export default class CricketScoreExtension extends Extension {
                     isFinished,
                     isInternational,
                     venue: event?.location || '',
-                    context: fullStatus?.summary || event?.summary || statusType?.detail || '',
+                    context,
                     league: league?.shortName || league?.name || '',
                     competitors,
                 });
@@ -1091,7 +1124,7 @@ export default class CricketScoreExtension extends Extension {
                 try {
                     Gio.AppInfo.launch_default_for_uri(selected.link, null);
                 } catch (e) {
-                    console.error(`[Cricket Score] Could not open URI: ${e.message}`);
+                    console.error(`[gnome-cricket-score] Could not open URI: ${e.message}`);
                 }
             });
             menu.addMenuItem(openItem);
@@ -1251,7 +1284,7 @@ export default class CricketScoreExtension extends Extension {
                     playByPlayUrl(match.leagueId, match.id, {limit, page}),
                     (pageErr, pageData) => {
                         if (pageErr)
-                            console.error(`[Cricket Score] Play-by-play page ${page}: ${pageErr.message}`);
+                            console.error(`[gnome-cricket-score] Play-by-play page ${page}: ${pageErr.message}`);
                         byPage.set(page, pageData?.commentary?.items || []);
                         pending -= 1;
                         if (pending > 0)
@@ -1309,7 +1342,7 @@ export default class CricketScoreExtension extends Extension {
                 return;
 
             if (summaryErr || !summaryData) {
-                console.error(`[Cricket Score] Scorecard error: ${summaryErr?.message || 'empty'}`);
+                console.error(`[gnome-cricket-score] Scorecard error: ${summaryErr?.message || 'empty'}`);
                 this._scorecard = null;
                 this._rebuildMenu(this._matches);
                 if (this._scorecardRefreshQueued)
@@ -1346,7 +1379,7 @@ export default class CricketScoreExtension extends Extension {
 
         this._fetchLatestPlayByPlay(match, (err, data) => {
             if (err)
-                console.error(`[Cricket Score] Play-by-play error: ${err.message}`);
+                console.error(`[gnome-cricket-score] Play-by-play error: ${err.message}`);
             playData = data;
             finish();
         });
@@ -1365,7 +1398,7 @@ export default class CricketScoreExtension extends Extension {
                 return;
 
             if (err) {
-                console.error(`[Cricket Score] Request error: ${err.message}`);
+                console.error(`[gnome-cricket-score] Request error: ${err.message}`);
                 this._buildFallbackMenu('Unable to load matches');
                 return;
             }

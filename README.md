@@ -1,4 +1,4 @@
-# Cricket Score — GNOME Shell Extension
+# gnome-cricket-score
 
 Live cricket scores in the GNOME top panel. Uses ESPN’s free public scoreboard API — no API key or signup required.
 
@@ -22,13 +22,13 @@ make install
 Then restart GNOME Shell and enable:
 
 ```bash
-gnome-extensions enable cricket-score@krushnaj.github.io
+gnome-extensions enable gnome-cricket-score@krushnaj.github.io
 ```
 
-- **Wayland:** log out and log back in  
-- **X11:** `Alt+F2`, type `r`, Enter  
+- **Wayland:** log out and log back in (required — `enable` fails until then with “does not exist”)
+- **X11:** `Alt+F2`, type `r`, Enter, then run the enable command above
 
-Or use the **Extensions** app and toggle **Cricket Score** on.
+Or use the **Extensions** app and toggle **gnome-cricket-score** on.
 
 ## Usage
 
@@ -41,7 +41,7 @@ Or use the **Extensions** app and toggle **Cricket Score** on.
 
 ## Preferences
 
-Open the extension settings (Extensions app → Cricket Score → gear icon):
+Open the extension settings (Extensions app → gnome-cricket-score → gear icon):
 
 - **Refresh interval** — poll period in seconds (default 10)
 - **Panel position** — left, center, or right of the top panel

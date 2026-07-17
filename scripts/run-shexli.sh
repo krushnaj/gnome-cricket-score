@@ -27,12 +27,12 @@ else
 fi
 
 glib-compile-schemas schemas/
-rm -f cricket-score@krushnaj.github.io.shell-extension.zip
+rm -f gnome-cricket-score@krushnaj.github.io.shell-extension.zip
 gnome-extensions pack --force --extra-source=icons --extra-source=LICENSE
 
 rm -rf .shexli-pkg
 mkdir -p .shexli-pkg
-unzip -q cricket-score@krushnaj.github.io.shell-extension.zip -d .shexli-pkg
+unzip -q gnome-cricket-score@krushnaj.github.io.shell-extension.zip -d .shexli-pkg
 
 python - <<'PY'
 import json
