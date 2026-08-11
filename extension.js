@@ -9,7 +9,7 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
-import Soup from 'gi://Soup?version=3.0';
+import Soup from 'gi://Soup';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -18,7 +18,8 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const API_URL =
-    'https://site.api.espn.com/apis/personalized/v2/scoreboard/header?sport=cricket';
+    'https://site.web.api.espn.com/apis/personalized/v2/scoreboard/header?sport=cricket';
+const ESPN_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const DEFAULT_LIVE_URL = 'https://www.espncricinfo.com/live-cricket-scores';
 
 function summaryUrl(leagueId, eventId) {
@@ -229,15 +230,10 @@ class CricketIndicator extends PanelMenu.Button {
             icon_size: 16,
         });
 
-        if (iconFile) {
-            try {
-                this._icon.gicon = Gio.FileIcon.new(iconFile);
-            } catch (_e) {
-                this._icon.icon_name = 'applications-games-symbolic';
-            }
-        } else {
+        if (iconFile)
+            this._icon.gicon = Gio.FileIcon.new(iconFile);
+        else
             this._icon.icon_name = 'applications-games-symbolic';
-        }
 
         this._label = new St.Label({
             text: '',
@@ -276,6 +272,7 @@ class CricketIndicator extends PanelMenu.Button {
 export default class CricketScoreExtension extends Extension {
     enable() {
         this._session = new Soup.Session();
+        this._session.user_agent = ESPN_USER_AGENT;
         this._settings = this.getSettings();
         this._timeoutId = null;
         this._fetchInFlight = false;
@@ -285,14 +282,13 @@ export default class CricketScoreExtension extends Extension {
         this._scorecard = null;
         this._scorecardMatchKey = '';
         this._activeTab = 'matches';
-        this._menuOpenStateId = null;
 
         this._addIndicator();
         this._updatePanelDisplay(null);
         this._fetchScore();
         this._startPolling();
 
-        this._settingsChangedId = this._settings.connect('changed', (_s, key) => {
+        this._settings.connectObject('changed', (_s, key) => {
             if (key === 'refresh-interval') {
                 this._stopPolling();
                 this._startPolling();
@@ -301,14 +297,11 @@ export default class CricketScoreExtension extends Extension {
             } else if (key === 'selected-match-id') {
                 this._applySelectedMatch();
             }
-        });
+        }, this);
     }
 
     disable() {
-        if (this._settingsChangedId && this._settings) {
-            this._settings.disconnect(this._settingsChangedId);
-            this._settingsChangedId = null;
-        }
+        this._settings?.disconnectObject(this);
 
         this._disconnectMenuState();
         this._stopPolling();
@@ -331,10 +324,7 @@ export default class CricketScoreExtension extends Extension {
     }
 
     _disconnectMenuState() {
-        if (this._menuOpenStateId && this._indicator?.menu) {
-            this._indicator.menu.disconnect(this._menuOpenStateId);
-            this._menuOpenStateId = null;
-        }
+        this._indicator?.menu.disconnectObject(this);
     }
 
     _addIndicator() {
@@ -343,12 +333,13 @@ export default class CricketScoreExtension extends Extension {
         this._indicator = new CricketIndicator(iconFile.query_exists(null) ? iconFile : null);
         Main.panel.addToStatusArea(this.uuid, this._indicator, 0, position);
 
-        this._menuOpenStateId = this._indicator.menu.connect(
+        this._indicator.menu.connectObject(
             'open-state-changed',
             (_menu, isOpen) => {
                 if (isOpen)
                     this._rebuildMenu(this._matches);
-            }
+            },
+            this
         );
     }
 
@@ -362,6 +353,7 @@ export default class CricketScoreExtension extends Extension {
     }
 
     _startPolling() {
+        this._stopPolling();
         const interval = this._settings?.get_int('refresh-interval') ?? 10;
 
         this._timeoutId = GLib.timeout_add_seconds(
@@ -1215,45 +1207,44 @@ export default class CricketScoreExtension extends Extension {
     }
 
     _httpGet(url, callback) {
-        let message;
-        try {
-            message = Soup.Message.new('GET', url);
-        } catch (e) {
-            callback(e, null);
-            return;
-        }
+        const message = Soup.Message.new('GET', url);
 
         if (!message) {
             callback(new Error('Could not create request'), null);
             return;
         }
 
-        message.get_request_headers().append('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64)');
+        // Minimal set that succeeds against ESPN (curl/Soup): browser UA + Accept.
+        // Also set session.user_agent in enable(); replace avoids duplicate UA headers.
+        const headers = message.get_request_headers();
+        headers.replace('User-Agent', ESPN_USER_AGENT);
+        headers.replace('Accept', 'application/json');
 
-        try {
-            this._session.send_and_read_async(
-                message,
-                GLib.PRIORITY_DEFAULT,
-                null,
-                (session, result) => {
-                    try {
-                        const bytes = session.send_and_read_finish(result);
-                        const statusCode = message.get_status();
-                        if (statusCode !== Soup.Status.OK) {
-                            callback(new Error(`HTTP ${statusCode}`), null);
-                            return;
-                        }
-                        const decoder = new TextDecoder('utf-8');
-                        const text = decoder.decode(bytes.get_data());
-                        callback(null, JSON.parse(text));
-                    } catch (err) {
-                        callback(err, null);
+        this._session.send_and_read_async(
+            message,
+            GLib.PRIORITY_DEFAULT,
+            null,
+            (session, result) => {
+                try {
+                    const bytes = session.send_and_read_finish(result);
+                    const statusCode = message.get_status();
+                    if (statusCode !== Soup.Status.OK) {
+                        let snippet = '';
+                        try {
+                            snippet = new TextDecoder('utf-8').decode(bytes.get_data()).slice(0, 180);
+                        } catch (_e) {}
+                        console.error(`[gnome-cricket-score] HTTP ${statusCode} for ${url}: ${snippet}`);
+                        callback(new Error(`HTTP ${statusCode}`), null);
+                        return;
                     }
+                    const decoder = new TextDecoder('utf-8');
+                    const text = decoder.decode(bytes.get_data());
+                    callback(null, JSON.parse(text));
+                } catch (err) {
+                    callback(err, null);
                 }
-            );
-        } catch (err) {
-            callback(err, null);
-        }
+            }
+        );
     }
 
     // ESPN play-by-play is paginated oldest-first. Page 1 is early balls, so

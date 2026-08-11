@@ -5,7 +5,7 @@ Live cricket scores in the GNOME top panel. Uses ESPN’s free public scoreboard
 ## Requirements
 
 - GNOME Shell 45 or newer
-- Network access to `site.api.espn.com` and `site.web.api.espn.com`
+- Network access to `site.web.api.espn.com`
 
 ## Install (local)
 
@@ -65,7 +65,7 @@ This project follows the [GNOME Code of Conduct](https://conduct.gnome.org/). Se
 Scores come from:
 
 ```
-https://site.api.espn.com/apis/personalized/v2/scoreboard/header?sport=cricket
+https://site.web.api.espn.com/apis/personalized/v2/scoreboard/header?sport=cricket
 ```
 
 Scorecards / live summary come from:
