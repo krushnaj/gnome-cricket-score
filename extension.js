@@ -166,6 +166,33 @@ function truncateName(name, max = 20) {
     return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
+function liveRole(player) {
+    return String(player?.activeName || '').toLowerCase().trim();
+}
+
+function formatFaced(runs, balls) {
+    if (runs == null || balls == null || runs === '' || balls === '')
+        return '';
+    return `${runs} (${balls}b)`;
+}
+
+function formatSpell(spell) {
+    if (spell?.overs == null || spell.overs === '')
+        return '';
+    return `${spell.overs} - ${spell.maidens ?? 0} - ${spell.conceded ?? 0} - ${spell.wickets ?? 0}`;
+}
+
+function partnershipPersonName(person) {
+    if (!person || typeof person !== 'object')
+        return '';
+    return person.athlete?.displayName ||
+        person.player?.displayName ||
+        person.displayName ||
+        person.shortName ||
+        person.name ||
+        '';
+}
+
 const MatchMenuItem = GObject.registerClass(
 class MatchMenuItem extends PopupMenu.PopupBaseMenuItem {
     _init(matchData, {selected = false, onSelect = null} = {}) {
@@ -525,16 +552,62 @@ export default class CricketScoreExtension extends Extension {
         return out;
     }
 
-    _playerInningsStats(player) {
-        for (const period of player.linescores || []) {
-            for (const ls of period.linescores || []) {
-                const st = ls.statistics || {};
-                const map = this._statsMap(st);
-                if (Object.keys(map).length)
-                    return {map, batting: st.batting || null, bowling: st.bowling || null};
-            }
-        }
-        return {map: this._statsMap(player.statistics), batting: null, bowling: null};
+    // Stats for one innings. Do not use the first nonempty period — after
+    // an innings change that is still the previous batting card.
+    _playerPeriodStats(player, periodNumber) {
+        const periods = player.linescores || [];
+        let period = null;
+        if (periodNumber != null && Number(periodNumber) > 0)
+            period = periods.find(p => Number(p.period) === Number(periodNumber));
+        if (!period)
+            period = periods[periods.length - 1] || null;
+
+        const inner = (period?.linescores || [])[0] || period || {};
+        const st = inner.statistics || period?.statistics || player.statistics || {};
+        return {
+            map: this._statsMap(st),
+            batting: st.batting || null,
+            bowling: st.bowling || null,
+        };
+    }
+
+    _makeBatter(name, teamAbbr, map, batting, role) {
+        const pvp = batting?.pvp || {};
+        const recent = batting?.battingRecent || batting?.lastTenOvers || {};
+        return {
+            name,
+            team: teamAbbr,
+            active: role === 'striker' || role === 'non-striker' || role === 'non striker',
+            role,
+            isStriker: role === 'striker',
+            runs: map.runs ?? '0',
+            balls: map.ballsFaced ?? '0',
+            fours: map.fours ?? '0',
+            sixes: map.sixes ?? '0',
+            strikeRate: map.strikeRate ?? '-',
+            thisBowler: formatFaced(pvp.runs, pvp.balls),
+            lastTen: formatFaced(recent.runs, recent.balls),
+        };
+    }
+
+    _makeBowler(name, teamAbbr, map, bowling, role) {
+        const spell = bowling?.currentSpell || {};
+        return {
+            name,
+            team: teamAbbr,
+            active: role === 'current bowler' || role === 'previous bowler',
+            isCurrent: role === 'current bowler',
+            overs: map.overs ?? '0',
+            maidens: map.maidens ?? '0',
+            conceded: map.conceded ?? '0',
+            wickets: map.wickets ?? '0',
+            economy: map.economyRate ?? '-',
+            dots: map.dots ?? map.dotBalls ?? '',
+            fours: map.fours ?? '',
+            sixes: map.sixes ?? '',
+            thisSpell: formatSpell(spell),
+            bowlingPosition: Number(map.bowlingPosition) || 0,
+        };
     }
 
     _parseScorecard(apiData) {
@@ -566,28 +639,37 @@ export default class CricketScoreExtension extends Extension {
             }
         }
 
-        // Current innings linescore (batting side)
+        const currentPeriod = Number(status.period) || 0;
+        const battingTeamId = String(status.battingTeamId || '');
+
+        // isBatting on a linescore means "this team's batting innings", not
+        // "currently batting". Use the current period's batting card.
         let battingLinescore = null;
         for (const team of teams) {
             for (const ls of team.linescores || []) {
-                if (ls.isBatting || Number(ls.isCurrent) === 1) {
-                    if (ls.isBatting)
-                        battingLinescore = {...ls, teamAbbr: team.abbr, teamName: team.name};
-                } else if (Number(ls.isCurrent) === 0 && !ls.isBatting) {
-                    // fielding side in current period
+                const isCurrent = Number(ls.isCurrent) === 1 ||
+                    (currentPeriod > 0 && Number(ls.period) === currentPeriod);
+                if (isCurrent && ls.isBatting) {
+                    battingLinescore = {
+                        ...ls,
+                        teamAbbr: team.abbr,
+                        teamName: team.name,
+                        teamId: team.id,
+                    };
                 }
             }
         }
-        if (!battingLinescore) {
-            for (const team of teams) {
-                for (const ls of team.linescores || []) {
-                    if (ls.isBatting) {
-                        battingLinescore = {...ls, teamAbbr: team.abbr, teamName: team.name};
-                        break;
-                    }
-                }
-                if (battingLinescore)
-                    break;
+        if (!battingLinescore && battingTeamId) {
+            const team = teams.find(t => t.id === battingTeamId);
+            const ls = (team?.linescores || []).find(l => Number(l.isCurrent) === 1) ||
+                (team?.linescores || []).find(l => Number(l.period) === currentPeriod);
+            if (team && ls) {
+                battingLinescore = {
+                    ...ls,
+                    teamAbbr: team.abbr,
+                    teamName: team.name,
+                    teamId: team.id,
+                };
             }
         }
 
@@ -595,6 +677,34 @@ export default class CricketScoreExtension extends Extension {
         const currentPartnership = partnerships.length
             ? partnerships[partnerships.length - 1]
             : null;
+
+        let lastBat = '';
+        let fow = '';
+        if (partnerships.length >= 2) {
+            const fallen = partnerships[partnerships.length - 2];
+            const currentNames = new Set(
+                (currentPartnership?.batsmen || []).map(b => partnershipPersonName(b))
+            );
+            const dismissed = (fallen.batsmen || []).find(b =>
+                !currentNames.has(partnershipPersonName(b))
+            ) || fallen.batsmen?.[0];
+            const dismissedName = partnershipPersonName(dismissed);
+            if (dismissedName) {
+                const faced = formatFaced(
+                    dismissed.runs ?? dismissed.score,
+                    dismissed.balls ?? dismissed.ballsFaced
+                );
+                lastBat = faced ? `${dismissedName} ${faced}` : dismissedName;
+            }
+            const wicketOver = fallen.wicketOver || fallen.end?.overs;
+            const endRuns = fallen.end?.runs;
+            const endWkts = fallen.end?.wickets ?? fallen.wicketNumber;
+            if (endRuns != null && endWkts != null) {
+                fow = wicketOver != null
+                    ? `${endRuns}/${endWkts} (${wicketOver} Ov)`
+                    : `${endRuns}/${endWkts}`;
+            }
+        }
 
         const reviews = [];
         for (const team of teams) {
@@ -612,93 +722,87 @@ export default class CricketScoreExtension extends Extension {
 
         const batters = [];
         const bowlers = [];
+        const battingId = battingLinescore?.teamId || battingTeamId;
 
         for (const roster of apiData.rosters || []) {
             const teamAbbr = roster?.team?.abbreviation || roster?.team?.displayName || '';
             for (const player of roster.roster || []) {
+                const role = liveRole(player);
+                const isStriker = role === 'striker';
+                const isNonStriker = role === 'non-striker' || role === 'non striker';
+                const isCurrentBowler = role === 'current bowler';
+                const isPrevBowler = role === 'previous bowler';
+                if (!isStriker && !isNonStriker && !isCurrentBowler && !isPrevBowler)
+                    continue;
+
                 const athlete = player.athlete || {};
-                const {map, batting, bowling} = this._playerInningsStats(player);
                 const name = athlete.displayName || athlete.shortName || athlete.name || '?';
+                const {map, batting, bowling} = this._playerPeriodStats(player, currentPeriod);
 
-                // Current / recent batters
-                if (String(map.batted) === '1') {
-                    const dismissal = map.dismissalCard || '';
-                    const isNotOut = dismissal === 'not out' || dismissal === '';
-                    if (player.active || isNotOut) {
-                        const pvp = batting?.pvp || {};
-                        const recent = batting?.battingRecent || {};
-                        const role = (player.activeName || '').toLowerCase();
-                        batters.push({
-                            name,
-                            team: teamAbbr,
-                            active: !!player.active,
-                            role,
-                            isStriker: role.includes('striker') && !role.includes('non'),
-                            runs: map.runs ?? '0',
-                            balls: map.ballsFaced ?? '0',
-                            fours: map.fours ?? '0',
-                            sixes: map.sixes ?? '0',
-                            strikeRate: map.strikeRate ?? '-',
-                            thisBowler: (pvp.runs != null && pvp.balls != null)
-                                ? `${pvp.runs}(${pvp.balls})`
-                                : '',
-                            lastFive: (recent.runs != null && recent.balls != null)
-                                ? `${recent.runs}(${recent.balls})`
-                                : '',
-                        });
-                    }
-                }
+                if (isStriker || isNonStriker)
+                    batters.push(this._makeBatter(name, teamAbbr, map, batting, role));
+                if (isCurrentBowler || isPrevBowler)
+                    bowlers.push(this._makeBowler(name, teamAbbr, map, bowling, role));
+            }
+        }
 
-                // Bowlers who have bowled
-                if (map.overs != null) {
-                    const overs = String(map.overs);
-                    if (overs && overs !== '0' && overs !== '0.0' && overs !== '-') {
-                        const spell = bowling?.currentSpell || {};
-                        const role = (player.activeName || '').toLowerCase();
-                        bowlers.push({
-                            name,
-                            team: teamAbbr,
-                            active: !!player.active,
-                            isCurrent: role.includes('current bowler') || role.includes('bowler'),
-                            overs: map.overs ?? '0',
-                            maidens: map.maidens ?? '0',
-                            conceded: map.conceded ?? '0',
-                            wickets: map.wickets ?? '0',
-                            economy: map.economyRate ?? '-',
-                            dots: map.dots ?? '',
-                            thisSpell: spell.overs != null
-                                ? `${spell.overs}-${spell.maidens ?? 0}-${spell.conceded ?? 0}-${spell.wickets ?? 0}`
-                                : '',
-                        });
-                    }
+        // Fallback if ESPN omitted live roles (innings break / incomplete payload)
+        if (!batters.length) {
+            for (const roster of apiData.rosters || []) {
+                const teamId = String(roster?.team?.id || '');
+                if (battingId && teamId !== battingId)
+                    continue;
+                const teamAbbr = roster?.team?.abbreviation || roster?.team?.displayName || '';
+                for (const player of roster.roster || []) {
+                    const {map, batting} = this._playerPeriodStats(player, currentPeriod);
+                    if (String(map.batted) !== '1')
+                        continue;
+                    const dismissal = String(map.dismissalCard || '').toLowerCase();
+                    if (dismissal && dismissal !== 'not out')
+                        continue;
+                    const athlete = player.athlete || {};
+                    const name = athlete.displayName || athlete.shortName || athlete.name || '?';
+                    batters.push(this._makeBatter(name, teamAbbr, map, batting, liveRole(player)));
                 }
             }
         }
 
-        // Prefer striker/non-striker order for batters
+        if (!bowlers.length) {
+            for (const roster of apiData.rosters || []) {
+                const teamId = String(roster?.team?.id || '');
+                if (battingId && teamId === battingId)
+                    continue;
+                const teamAbbr = roster?.team?.abbreviation || roster?.team?.displayName || '';
+                for (const player of roster.roster || []) {
+                    const {map, bowling} = this._playerPeriodStats(player, currentPeriod);
+                    const overs = String(map.overs ?? '');
+                    if (!overs || overs === '0' || overs === '0.0' || overs === '-')
+                        continue;
+                    const athlete = player.athlete || {};
+                    const name = athlete.displayName || athlete.shortName || athlete.name || '?';
+                    bowlers.push(this._makeBowler(name, teamAbbr, map, bowling, liveRole(player)));
+                }
+            }
+            bowlers.sort((a, b) => (b.bowlingPosition || 0) - (a.bowlingPosition || 0));
+            bowlers.splice(2);
+        }
+
         batters.sort((a, b) => {
             if (a.isStriker !== b.isStriker)
                 return a.isStriker ? -1 : 1;
-            if (a.active !== b.active)
-                return a.active ? -1 : 1;
             return 0;
         });
-
-        // Current bowler first
         bowlers.sort((a, b) => {
             if (a.isCurrent !== b.isCurrent)
                 return a.isCurrent ? -1 : 1;
-            if (a.active !== b.active)
-                return a.active ? -1 : 1;
             return 0;
         });
 
+        const inningsStats = this._statsMap(battingLinescore?.statistics);
         const runs = battingLinescore?.runs;
         const overs = battingLinescore?.overs;
-        let runRate = '';
-        if (currentPartnership?.runRate != null)
-            runRate = String(currentPartnership.runRate);
-        else if (runs != null && overs != null && Number(overs) > 0) {
+        let runRate = inningsStats.runRate || battingLinescore?.runRate || '';
+        if (!runRate && runs != null && overs != null && Number(overs) > 0) {
             const o = Number(overs);
             const whole = Math.floor(o);
             const balls = Math.round((o - whole) * 10);
@@ -739,8 +843,11 @@ export default class CricketScoreExtension extends Extension {
                 }
                 : null,
             reviews,
+            lastBat,
+            fow,
             battingScore: battingLinescore?.score || '',
             battingTeam: battingLinescore?.teamAbbr || battingLinescore?.teamName || '',
+            battingTeamId: battingLinescore?.teamId || battingTeamId,
         };
     }
 
@@ -839,41 +946,34 @@ export default class CricketScoreExtension extends Extension {
 
         const sc = this._scorecard;
 
-        // Header: batting team score prominently, then other team
-        const battingTeam = sc.teams.find(t =>
-            t.abbr === sc.battingTeam || t.name === sc.battingTeam
-        ) || sc.teams.find(t => (t.score || '').length > 0) || sc.teams[0];
-        const otherTeams = sc.teams.filter(t => t !== battingTeam);
-
-        if (battingTeam) {
-            addGridRow(menu, [
-                {
-                    text: battingTeam.abbr || battingTeam.name,
-                    expand: true,
-                    styleClass: 'cricket-grid-cell cricket-grid-team',
-                },
-                {
-                    text: battingTeam.score || sc.battingScore || '—',
-                    width: 130,
-                    align: Clutter.ActorAlign.END,
-                    styleClass: 'cricket-grid-cell cricket-grid-score',
-                },
-            ]);
-        }
-        for (const team of otherTeams) {
+        for (const team of sc.teams) {
+            const isBatting = team.id === sc.battingTeamId ||
+                team.abbr === sc.battingTeam ||
+                team.name === sc.battingTeam;
             addGridRow(menu, [
                 {
                     text: team.abbr || team.name,
                     expand: true,
-                    styleClass: 'cricket-grid-cell',
+                    styleClass: isBatting
+                        ? 'cricket-grid-cell cricket-grid-team'
+                        : 'cricket-grid-cell',
                 },
                 {
-                    text: team.score || 'yet to bat',
-                    width: 130,
+                    text: team.score || (isBatting ? sc.battingScore || '—' : 'yet to bat'),
+                    width: 150,
                     align: Clutter.ActorAlign.END,
-                    styleClass: 'cricket-grid-cell cricket-grid-muted',
+                    styleClass: isBatting
+                        ? 'cricket-grid-cell cricket-grid-score'
+                        : 'cricket-grid-cell cricket-grid-muted',
                 },
             ]);
+        }
+
+        if (sc.session || sc.summary) {
+            const statusLine = sc.session && sc.summary
+                ? `${sc.session}: ${sc.summary}`
+                : sc.summary || sc.session;
+            addStaticLine(menu, statusLine, 'cricket-scorecard-muted');
         }
 
         const meta = [];
@@ -883,9 +983,6 @@ export default class CricketScoreExtension extends Extension {
             meta.push(`Current RR: ${sc.runRate}`);
         if (meta.length)
             addStaticLine(menu, meta.join(' · '), 'cricket-scorecard-muted');
-
-        if (sc.summary)
-            addStaticLine(menu, sc.summary, 'cricket-scorecard-muted');
 
         // Batters
         if (sc.batters?.length) {
@@ -897,28 +994,26 @@ export default class CricketScoreExtension extends Extension {
                 {text: '4s', width: 28, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
                 {text: '6s', width: 28, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
                 {text: 'SR', width: 44, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
-                {text: 'Vs bowl', width: 56, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
-                {text: 'Last 5', width: 52, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
+                {text: 'This Bowler', width: 72, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
+                {text: 'Last 10', width: 72, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
             ], {header: true});
 
-            for (const batter of sc.batters.slice(0, 4)) {
+            for (const batter of sc.batters.slice(0, 2)) {
                 const mark = batter.isStriker ? '*' : '';
                 addGridRow(menu, [
                     {
-                        text: `${truncateName(batter.name, 16)}${mark}`,
+                        text: `${truncateName(batter.name, 18)}${mark}`,
                         expand: true,
                         ellipsize: true,
-                        styleClass: batter.active
-                            ? 'cricket-grid-cell cricket-grid-team'
-                            : 'cricket-grid-cell',
+                        styleClass: 'cricket-grid-cell cricket-grid-team',
                     },
                     {text: String(batter.runs), width: 32, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-num'},
                     {text: String(batter.balls), width: 32, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-num'},
                     {text: String(batter.fours), width: 28, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-num'},
                     {text: String(batter.sixes), width: 28, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-num'},
                     {text: String(batter.strikeRate), width: 44, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-num'},
-                    {text: batter.thisBowler || '—', width: 56, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-muted'},
-                    {text: batter.lastFive || '—', width: 52, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-muted'},
+                    {text: batter.thisBowler || '—', width: 72, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-muted'},
+                    {text: batter.lastTen || '—', width: 72, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-muted'},
                 ]);
             }
         }
@@ -933,16 +1028,16 @@ export default class CricketScoreExtension extends Extension {
                 {text: 'R', width: 32, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
                 {text: 'W', width: 28, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
                 {text: 'Econ', width: 44, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
-                {text: 'This spell', width: 90, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
+                {text: 'This spell', width: 110, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-header'},
             ], {header: true});
 
-            for (const bowler of sc.bowlers.slice(0, 4)) {
+            for (const bowler of sc.bowlers.slice(0, 2)) {
                 addGridRow(menu, [
                     {
-                        text: truncateName(bowler.name, 16),
+                        text: truncateName(bowler.name, 18),
                         expand: true,
                         ellipsize: true,
-                        styleClass: bowler.isCurrent || bowler.active
+                        styleClass: bowler.isCurrent
                             ? 'cricket-grid-cell cricket-grid-team'
                             : 'cricket-grid-cell',
                     },
@@ -951,25 +1046,29 @@ export default class CricketScoreExtension extends Extension {
                     {text: String(bowler.conceded), width: 32, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-num'},
                     {text: String(bowler.wickets), width: 28, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-num'},
                     {text: String(bowler.economy), width: 44, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-num'},
-                    {text: bowler.thisSpell || '—', width: 90, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-muted'},
+                    {text: bowler.thisSpell || '—', width: 110, align: Clutter.ActorAlign.END, styleClass: 'cricket-grid-cell cricket-grid-muted'},
                 ]);
             }
         }
 
         this._addOversStrip(menu, sc.overs || []);
 
-        // Footer: partnership + reviews
         if (sc.partnership) {
             const p = sc.partnership;
-            const bits = [`Partnership: ${p.runs ?? 0} runs`];
-            if (p.balls != null)
+            const bits = [`Partnership: ${p.runs ?? 0} Runs`];
+            if (p.overs != null)
+                bits.push(`${p.overs} Ov`);
+            else if (p.balls != null)
                 bits.push(`${p.balls} B`);
-            else if (p.overs != null)
-                bits.push(`${p.overs} ov`);
             if (p.runRate != null)
                 bits.push(`RR: ${p.runRate}`);
             addStaticLine(menu, bits.join(', '), 'cricket-scorecard-muted');
         }
+
+        if (sc.lastBat)
+            addStaticLine(menu, `Last Bat: ${sc.lastBat}`, 'cricket-scorecard-muted');
+        if (sc.fow)
+            addStaticLine(menu, `FOW: ${sc.fow}`, 'cricket-scorecard-muted');
 
         if (sc.reviews?.length) {
             const text = sc.reviews
@@ -1079,6 +1178,30 @@ export default class CricketScoreExtension extends Extension {
         menu.addMenuItem(row);
     }
 
+    // Keep header/tabs/footer fixed; scroll only the tall content so
+    // bottom actions stay reachable when many matches are listed.
+    _addScrollableSection(menu, fillSection) {
+        const scrollView = new St.ScrollView({
+            style_class: 'cricket-menu-scroll',
+            overlay_scrollbars: true,
+            x_expand: true,
+            y_expand: true,
+        });
+        scrollView.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
+
+        const monitorHeight = Main.layoutManager.primaryMonitor?.height ?? 900;
+        const maxHeight = Math.max(220, Math.floor(monitorHeight * 0.45));
+        scrollView.style = `max-height: ${maxHeight}px;`;
+
+        const section = new PopupMenu.PopupMenuSection();
+        fillSection(section);
+        scrollView.add_child(section.box);
+
+        const wrapper = new PopupMenu.PopupMenuSection();
+        wrapper.box.add_child(scrollView);
+        menu.addMenuItem(wrapper);
+    }
+
     _addMatchesToMenu(menu, matches) {
         const selectedId = this._settings?.get_string('selected-match-id') || '';
 
@@ -1099,12 +1222,14 @@ export default class CricketScoreExtension extends Extension {
             return;
         }
 
-        for (const matchData of ordered) {
-            menu.addMenuItem(new MatchMenuItem(matchData, {
-                selected: matchData.id === selectedId,
-                onSelect: id => this._selectMatch(id),
-            }));
-        }
+        this._addScrollableSection(menu, section => {
+            for (const matchData of ordered) {
+                section.addMenuItem(new MatchMenuItem(matchData, {
+                    selected: matchData.id === selectedId,
+                    onSelect: id => this._selectMatch(id),
+                }));
+            }
+        });
     }
 
     _addFooterActions(menu, selected) {
@@ -1165,10 +1290,13 @@ export default class CricketScoreExtension extends Extension {
         this._addTabBar(menu);
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        if (this._activeTab === 'matches')
+        if (this._activeTab === 'matches') {
             this._addMatchesToMenu(menu, matches);
-        else
-            this._addScorecardToMenu(menu, selected);
+        } else {
+            this._addScrollableSection(menu, section => {
+                this._addScorecardToMenu(section, selected);
+            });
+        }
 
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._addFooterActions(menu, selected);

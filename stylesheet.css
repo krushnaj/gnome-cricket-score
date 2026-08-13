@@ -19,6 +19,10 @@
     padding: 0 4px;
 }
 
+.cricket-menu-scroll {
+    padding: 0;
+}
+
 .cricket-tabs {
     spacing: 8px;
     padding: 4px 8px;
