@@ -193,6 +193,112 @@ function partnershipPersonName(person) {
         '';
 }
 
+// Normalize overs like "9", "9.0", "9.00" for delay-note matching.
+function normalizeOversValue(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n))
+        return String(value ?? '');
+    const whole = Math.floor(n);
+    const balls = Math.round((n - whole) * 10);
+    return balls ? `${whole}.${balls}` : String(whole);
+}
+
+// LIVE / DRINKS / TEA / LUNCH / STUMPS / DINNER / RAIN / …
+function normalizePlayStatus(raw, {isFinished = false} = {}) {
+    if (isFinished)
+        return 'RESULT';
+
+    const text = String(raw || '').trim();
+    if (!text)
+        return 'LIVE';
+
+    const lower = text.toLowerCase().replace(/\s+/g, ' ');
+
+    if (/match delayed by rain|rain delay|\brain\b/.test(lower))
+        return 'RAIN';
+    if (/bad light/.test(lower))
+        return 'BAD LIGHT';
+    if (/wet ground/.test(lower))
+        return 'WET GROUND';
+    if (/\bdrinks\b/.test(lower))
+        return 'DRINKS';
+    if (/\blunch\b/.test(lower))
+        return 'LUNCH';
+    if (/\btea\b/.test(lower))
+        return 'TEA';
+    if (/\bdinner\b/.test(lower))
+        return 'DINNER';
+    if (/\bstumps\b|end of day\b|close of play\b/.test(lower))
+        return 'STUMPS';
+    if (/innings break/.test(lower))
+        return 'INNINGS BREAK';
+    if (/^live\b/.test(lower) || lower === 'in progress')
+        return 'LIVE';
+
+    // Situation lines ("Pakistan trail…") are not play-status badges
+    if (text.length > 36 ||
+        /\b(trail|lead|require|won by|need |target)\b/.test(lower))
+        return 'LIVE';
+
+    return text.toUpperCase();
+}
+
+function playStatusFromNotes(notes, battingOvers) {
+    const matchNotes = (notes || []).filter(n =>
+        n?.type === 'matchnote' && typeof n.text === 'string' && n.text
+    );
+    const currentOvers = battingOvers != null && battingOvers !== ''
+        ? normalizeOversValue(battingOvers)
+        : null;
+
+    for (let i = matchNotes.length - 1; i >= 0; i--) {
+        const text = matchNotes[i].text;
+        const prefix = text.match(
+            /^(Drinks|Lunch|Tea|Stumps|Dinner|Rain|Bad Light|Wet Ground|End Of Day|Innings Break)\b/i
+        );
+        if (!prefix)
+            continue;
+
+        const oversMatch = text.match(/in\s+([\d.]+)\s+overs/i);
+        if (oversMatch && currentOvers) {
+            if (normalizeOversValue(oversMatch[1]) !== currentOvers)
+                continue;
+        } else if (oversMatch && !currentOvers) {
+            continue;
+        }
+
+        return normalizePlayStatus(prefix[1]);
+    }
+
+    return null;
+}
+
+function resolvePlayStatus({
+    statusText = '',
+    eventSummary = '',
+    notes = null,
+    battingOvers = null,
+    isFinished = false,
+    headerPlayStatus = '',
+} = {}) {
+    if (isFinished)
+        return 'RESULT';
+
+    const fromHeader = normalizePlayStatus(headerPlayStatus);
+    if (fromHeader && fromHeader !== 'LIVE')
+        return fromHeader;
+
+    const fromStatus = normalizePlayStatus(statusText || eventSummary);
+    if (fromStatus && fromStatus !== 'LIVE')
+        return fromStatus;
+
+    const fromNotes = playStatusFromNotes(notes, battingOvers);
+    if (fromNotes && fromNotes !== 'LIVE')
+        return fromNotes;
+
+    return 'LIVE';
+}
+
 const MatchMenuItem = GObject.registerClass(
 class MatchMenuItem extends PopupMenu.PopupBaseMenuItem {
     _init(matchData, {selected = false, onSelect = null} = {}) {
@@ -218,6 +324,16 @@ class MatchMenuItem extends PopupMenu.PopupBaseMenuItem {
             text: matchData.panelText,
             style: 'font-weight: bold;',
         }));
+
+        if (matchData.isLive && matchData.playStatus && matchData.playStatus !== 'LIVE') {
+            const status = new St.Label({
+                text: matchData.playStatus,
+                style_class: 'cricket-play-status cricket-play-status-delay',
+                x_expand: true,
+            });
+            status.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            card.add_child(status);
+        }
 
         if (matchData.context) {
             const contextStyle = matchData.isLive
@@ -523,6 +639,13 @@ export default class CricketScoreExtension extends Extension {
                         context = localStart;
                 }
 
+                const playStatus = resolvePlayStatus({
+                    statusText: statusType?.description || statusType?.detail || '',
+                    eventSummary: event?.summary || '',
+                    notes: event?.notes || [],
+                    isFinished,
+                });
+
                 matches.push({
                     id,
                     leagueId,
@@ -534,6 +657,7 @@ export default class CricketScoreExtension extends Extension {
                     isInternational,
                     venue: event?.location || '',
                     context,
+                    playStatus,
                     league: league?.shortName || league?.name || '',
                     competitors,
                 });
@@ -814,11 +938,21 @@ export default class CricketScoreExtension extends Extension {
         if (!teams.length && !batters.length && !bowlers.length)
             return null;
 
+        const isFinished = statusType?.state === 'post';
+        const playStatus = resolvePlayStatus({
+            statusText: statusType.description || statusType.detail || statusType.statusPrimary || '',
+            eventSummary: header.competitions?.[0]?.status?.type?.description || '',
+            notes: apiData.notes || [],
+            battingOvers: battingLinescore?.overs,
+            isFinished,
+        });
+
         return {
             summary: status.summary || '',
             session: status.session || '',
             displayPeriod: status.displayPeriod || '',
             statusText: statusType.description || statusType.detail || '',
+            playStatus,
             venue: apiData.gameInfo?.venue?.fullName || '',
             toss,
             runRate,
@@ -933,6 +1067,22 @@ export default class CricketScoreExtension extends Extension {
         menu.addMenuItem(refreshItem);
     }
 
+    _addPlayStatusBadge(menu, playStatus) {
+        const label = playStatus || 'LIVE';
+        const isLive = label === 'LIVE';
+        const item = addStaticLine(
+            menu,
+            label,
+            isLive
+                ? 'cricket-play-status cricket-play-status-live'
+                : 'cricket-play-status cricket-play-status-delay'
+        );
+        if (item.label?.clutter_text) {
+            item.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            item.label.x_expand = true;
+        }
+    }
+
     _addScorecardToMenu(menu, selected) {
         if (!selected) {
             addStaticLine(menu, 'No match selected — pick one in Matches', 'cricket-scorecard-muted');
@@ -945,6 +1095,8 @@ export default class CricketScoreExtension extends Extension {
         }
 
         const sc = this._scorecard;
+
+        this._addPlayStatusBadge(menu, sc.playStatus || 'LIVE');
 
         for (const team of sc.teams) {
             const isBatting = team.id === sc.battingTeamId ||
@@ -1470,8 +1622,16 @@ export default class CricketScoreExtension extends Extension {
             }
 
             this._scorecard = this._parseScorecard(summaryData);
-            if (this._scorecard)
+            if (this._scorecard) {
                 this._scorecard.overs = this._parseOvers(playData);
+
+                // Scoreboard header is often fresher for delay badges than summary.
+                const headerStatus = selected.playStatus || '';
+                if (headerStatus && headerStatus !== 'LIVE')
+                    this._scorecard.playStatus = headerStatus;
+                else if (!this._scorecard.playStatus)
+                    this._scorecard.playStatus = headerStatus || 'LIVE';
+            }
 
             if (this._scorecard?.teams?.length >= 2) {
                 const panelText = this._scorecard.teams.map(t => {
