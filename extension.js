@@ -950,6 +950,7 @@ export default class CricketScoreExtension extends Extension {
         return {
             summary: status.summary || '',
             session: status.session || '',
+            period: currentPeriod,
             displayPeriod: status.displayPeriod || '',
             statusText: statusType.description || statusType.detail || '',
             playStatus,
@@ -985,10 +986,24 @@ export default class CricketScoreExtension extends Extension {
         };
     }
 
-    _parseOvers(playByPlayData) {
-        const items = playByPlayData?.commentary?.items;
+    _parseOvers(playByPlayData, periodNumber) {
+        let items = playByPlayData?.commentary?.items;
         if (!Array.isArray(items) || !items.length)
             return [];
+
+        const itemInnings = item =>
+            Number(item.period) || Number(item.innings?.number) || 0;
+
+        if (periodNumber > 0) {
+            const current = items.filter(item => itemInnings(item) === Number(periodNumber));
+            items = current.length ? current : items;
+        }
+
+        // Over numbers restart each innings; never mix periods.
+        const latestInnings = items.reduce((max, item) =>
+            Math.max(max, itemInnings(item)), 0);
+        if (latestInnings > 0)
+            items = items.filter(item => itemInnings(item) === latestInnings);
 
         const byOver = new Map();
         for (const item of items) {
@@ -1623,7 +1638,7 @@ export default class CricketScoreExtension extends Extension {
 
             this._scorecard = this._parseScorecard(summaryData);
             if (this._scorecard) {
-                this._scorecard.overs = this._parseOvers(playData);
+                this._scorecard.overs = this._parseOvers(playData, this._scorecard.period);
 
                 // Scoreboard header is often fresher for delay badges than summary.
                 const headerStatus = selected.playStatus || '';
