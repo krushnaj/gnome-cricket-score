@@ -176,6 +176,85 @@ function formatFaced(runs, balls) {
     return `${runs} (${balls}b)`;
 }
 
+// Cricinfo-style "Day 3 - Session 1" for multi-day matches.
+function formatTestSessionLabel({sessionText = '', dayNumber = 0, sessionNumber = 0} = {}) {
+    const text = String(sessionText || '').replace(/\s+/g, ' ').trim();
+    let dayPart = '';
+    let sessionPart = '';
+
+    const full = text.match(/^Day\s+(\d+)(?:\s*-\s*|\s+)Session\s+(\d+)$/i);
+    if (full) {
+        dayPart = `Day ${full[1]}`;
+        sessionPart = `Session ${full[2]}`;
+    } else {
+        const dayOnly = text.match(/^Day\s+(\d+)\b/i);
+        if (dayOnly)
+            dayPart = `Day ${dayOnly[1]}`;
+        else if (Number(dayNumber) > 0)
+            dayPart = `Day ${Number(dayNumber)}`;
+        else if (text)
+            dayPart = text;
+
+        const sessInText = text.match(/Session\s+(\d+)/i);
+        if (sessInText)
+            sessionPart = `Session ${sessInText[1]}`;
+        else if (Number(sessionNumber) > 0)
+            sessionPart = `Session ${Number(sessionNumber)}`;
+    }
+
+    if (dayPart && sessionPart)
+        return `${dayPart} - ${sessionPart}`;
+    return dayPart || sessionPart || '';
+}
+
+function latestInningsMeta(comp, playByPlayData) {
+    let sessionNumber = 0;
+    let dayNumber = 0;
+
+    const commentaries = comp?.commentaries;
+    if (commentaries && typeof commentaries === 'object' && !Array.isArray(commentaries)) {
+        let bestSeq = -1;
+        for (const ball of Object.values(commentaries)) {
+            const seq = Number(ball?.sequence) || Number(ball?.id) || 0;
+            const sess = Number(ball?.innings?.session) || 0;
+            const day = Number(ball?.innings?.day) || 0;
+            if (seq >= bestSeq && (sess > 0 || day > 0)) {
+                bestSeq = seq;
+                if (sess > 0)
+                    sessionNumber = sess;
+                if (day > 0)
+                    dayNumber = day;
+            }
+        }
+    }
+
+    const items = playByPlayData?.commentary?.items;
+    if (Array.isArray(items) && items.length) {
+        for (let i = items.length - 1; i >= 0; i--) {
+            const sess = Number(items[i]?.innings?.session) || 0;
+            const day = Number(items[i]?.innings?.day) || 0;
+            if (sess > 0 || day > 0) {
+                if (sess > 0)
+                    sessionNumber = sess;
+                if (day > 0)
+                    dayNumber = day;
+                break;
+            }
+        }
+    }
+
+    return {sessionNumber, dayNumber};
+}
+
+function isTestMatchEvent(event) {
+    const card = event?.class?.generalClassCard || '';
+    const name = event?.class?.name || '';
+    const type = event?.eventType || '';
+    return card === 'Test' ||
+        type === 'Test' ||
+        /test matches/i.test(name);
+}
+
 function formatSpell(spell) {
     if (spell?.overs == null || spell.overs === '')
         return '';
@@ -655,9 +734,12 @@ export default class CricketScoreExtension extends Extension {
                     hasStarted,
                     isFinished,
                     isInternational,
+                    isTest: isTestMatchEvent(event),
                     venue: event?.location || '',
                     context,
                     playStatus,
+                    session: fullStatus?.session || '',
+                    dayNumber: Number(fullStatus?.dayNumber) || 0,
                     league: league?.shortName || league?.name || '',
                     competitors,
                 });
@@ -947,9 +1029,31 @@ export default class CricketScoreExtension extends Extension {
             isFinished,
         });
 
+        const inningsMeta = latestInningsMeta(comp, null);
+        const dayNumber = Number(status.dayNumber) || inningsMeta.dayNumber || 0;
+        const sessionNumber = inningsMeta.sessionNumber || 0;
+        const isTest = isTestMatchEvent(header) ||
+            isTestMatchEvent({
+                eventType: header.league?.eventType || comp?.type?.abbreviation,
+                class: header.league || comp?.type,
+            }) ||
+            /day\s+\d+/i.test(status.session || '') ||
+            dayNumber > 0;
+
+        const sessionLabel = isTest
+            ? formatTestSessionLabel({
+                sessionText: status.session || '',
+                dayNumber,
+                sessionNumber,
+            })
+            : (status.session || '');
+
         return {
             summary: status.summary || '',
-            session: status.session || '',
+            session: sessionLabel,
+            dayNumber,
+            sessionNumber,
+            isTest,
             period: currentPeriod,
             displayPeriod: status.displayPeriod || '',
             statusText: statusType.description || statusType.detail || '',
@@ -1137,10 +1241,13 @@ export default class CricketScoreExtension extends Extension {
         }
 
         if (sc.session || sc.summary) {
+            // Tests: "Day 4 - Session 3: Sri Lanka lead by 16 runs"
             const statusLine = sc.session && sc.summary
                 ? `${sc.session}: ${sc.summary}`
                 : sc.summary || sc.session;
             addStaticLine(menu, statusLine, 'cricket-scorecard-muted');
+        } else if (sc.isTest && sc.dayNumber > 0) {
+            addStaticLine(menu, `Day ${sc.dayNumber}`, 'cricket-scorecard-muted');
         }
 
         const meta = [];
@@ -1646,6 +1753,24 @@ export default class CricketScoreExtension extends Extension {
                     this._scorecard.playStatus = headerStatus;
                 else if (!this._scorecard.playStatus)
                     this._scorecard.playStatus = headerStatus || 'LIVE';
+
+                // Tests: compose "Day X - Session Y" from summary + play-by-play + header.
+                const fromPlay = latestInningsMeta(null, playData);
+                const dayNumber = this._scorecard.dayNumber ||
+                    selected.dayNumber || fromPlay.dayNumber || 0;
+                const sessionNumber = this._scorecard.sessionNumber ||
+                    fromPlay.sessionNumber || 0;
+                const isTest = this._scorecard.isTest || selected.isTest || dayNumber > 0;
+                if (isTest) {
+                    this._scorecard.session = formatTestSessionLabel({
+                        sessionText: this._scorecard.session || selected.session || '',
+                        dayNumber,
+                        sessionNumber,
+                    });
+                    this._scorecard.isTest = true;
+                    this._scorecard.dayNumber = dayNumber;
+                    this._scorecard.sessionNumber = sessionNumber;
+                }
             }
 
             if (this._scorecard?.teams?.length >= 2) {
